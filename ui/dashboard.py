@@ -9,6 +9,7 @@ import streamlit as st
 from core.optimization import SUPPORTED_DISTRIBUTIONS, distribution_ppf
 from core.mtbur import calculate_mtbur
 from core.reliability import analyze_datasets, decision_from_metrics, results_to_frame
+from core.spares import calculate_spare_quantity, spare_recommendations_by_confidence
 from core.weibull_math import failure_mode_from_beta
 from data.excel_parser import deserialize_datasets, parse_excel, serialize_datasets
 from data.templates import build_template_workbook
@@ -166,6 +167,102 @@ def render_mtbur_calculator() -> None:
     )
 
 
+def render_spare_quantity_calculator() -> None:
+    st.subheader("Poisson Spare Quantity Calculator")
+    st.caption("Estimate spare demand during turnaround time using a Poisson distribution.")
+
+    input_1, input_2, input_3 = st.columns(3)
+    aircraft_count = input_1.number_input(
+        "Number of aircraft",
+        min_value=1,
+        value=1,
+        step=1,
+        key="spares_aircraft_count",
+    )
+    annual_flight_hours = input_2.number_input(
+        "Average annual flight hours per aircraft",
+        min_value=0.0,
+        value=3_000.0,
+        step=100.0,
+        key="spares_annual_flight_hours",
+    )
+    turnaround_days = input_3.number_input(
+        "Turnaround time (TAT), days",
+        min_value=0.0,
+        value=30.0,
+        step=1.0,
+        key="spares_tat_days",
+        help="TAT is converted to a fraction of a year by dividing it by 365.",
+    )
+
+    input_4, input_5, input_6 = st.columns(3)
+    quantity_per_aircraft = input_4.number_input(
+        "Quantity per aircraft (QPA)",
+        min_value=1,
+        value=1,
+        step=1,
+        key="spares_qpa",
+    )
+    mtbur = input_5.number_input(
+        "MTBUR (flight hours)",
+        min_value=0.1,
+        value=1_000.0,
+        step=100.0,
+        key="spares_mtbur",
+    )
+    confidence_percent = input_6.number_input(
+        "Service confidence (%)",
+        min_value=0.01,
+        max_value=99.99,
+        value=95.0,
+        step=1.0,
+        key="spares_confidence_percent",
+        help="The recommended spare quantity covers Poisson demand with at least this probability.",
+    )
+
+    result = calculate_spare_quantity(
+        aircraft_count,
+        annual_flight_hours,
+        turnaround_days,
+        quantity_per_aircraft,
+        mtbur,
+        confidence_percent,
+    )
+    tat_year_fraction = float(turnaround_days) / 365.0
+
+    st.latex(
+        r"\lambda = \frac{\mathrm{Average\ Annual\ Flight\ Hours}\ \times\ \mathrm{QPA}\ \times\ \mathrm{Number\ of\ Aircraft}\ \times\ (\mathrm{TAT}/365)}{\mathrm{MTBUR}}"
+    )
+    metric_1, metric_2, metric_3, metric_4 = st.columns(4)
+    metric_1.metric("Expected removals (lambda)", f"{result.expected_removals:,.3f}")
+    metric_2.metric("Recommended spares", f"{result.recommended_spares:,}")
+    metric_3.metric("Requested confidence", f"{confidence_percent:.2f}%")
+    metric_4.metric("Achieved confidence", f"{result.achieved_confidence:.2%}")
+
+    st.markdown("#### Recommended Spares by Confidence Level")
+    confidence_schedule = spare_recommendations_by_confidence(result.expected_removals)
+    schedule_frame = pd.DataFrame(
+        {
+            "Confidence Level": [f"{item.requested_confidence:.0%}" for item in confidence_schedule],
+            "Recommended Spares": [item.recommended_spares for item in confidence_schedule],
+        }
+    )
+    st.dataframe(
+        schedule_frame,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Confidence Level": st.column_config.TextColumn("Confidence Level"),
+            "Recommended Spares": st.column_config.NumberColumn("Recommended Spares", format="%d"),
+        },
+    )
+    st.info(
+        f"Keep {result.recommended_spares:,} spare(s) to cover the expected Poisson demand during the "
+        f"{float(turnaround_days):,.1f}-day TAT with at least {confidence_percent:.2f}% confidence. "
+        f"TAT / 365 = {tat_year_fraction:.4f}."
+    )
+
+
 def render_footer() -> None:
     st.caption("All future risk metrics are conditional on surviving to the current in-service time.")
     st.markdown(
@@ -206,8 +303,15 @@ def render_dashboard() -> None:
             help="Expected format: one component per column, with at least two positive numeric observations in each usable column.",
         )
 
-    distribution_tab, summary_tab, detail_tab, mtbur_tab, export_tab = st.tabs(
-        ["Distribution Selection", "Component Summary", "Component Deep Dive", "MTBUR Calculator", "Export"]
+    distribution_tab, summary_tab, detail_tab, mtbur_tab, spares_tab, export_tab = st.tabs(
+        [
+            "Distribution Selection",
+            "Component Summary",
+            "Component Deep Dive",
+            "MTBUR Calculator",
+            "Spare Quantity",
+            "Export",
+        ]
     )
 
     if uploaded_file is None:
@@ -219,6 +323,8 @@ def render_dashboard() -> None:
             st.info("Upload an Excel file to view a component deep dive.")
         with mtbur_tab:
             render_mtbur_calculator()
+        with spares_tab:
+            render_spare_quantity_calculator()
         with export_tab:
             st.info("Upload an Excel file to prepare analysis exports.")
         render_footer()
@@ -523,6 +629,9 @@ def render_dashboard() -> None:
 
     with mtbur_tab:
         render_mtbur_calculator()
+
+    with spares_tab:
+        render_spare_quantity_calculator()
 
     with export_tab:
         st.subheader("Download Outputs")
