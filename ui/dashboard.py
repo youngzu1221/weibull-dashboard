@@ -377,12 +377,6 @@ def render_dashboard() -> None:
 
     top_row = df_results.iloc[0]
     trend_horizon = max(float(sidebar.mission_time), float(sidebar.prediction_horizon))
-    metric_1, metric_2, metric_3, metric_4, metric_5 = st.columns(5)
-    metric_1.metric("Components", f"{len(df_results)}")
-    metric_2.metric("Highest Failure Probability", fmt_pct(top_row["Conditional Probability of Failure"]))
-    metric_3.metric("Highest Risk Component", highest_risk_component_text(df_results))
-    metric_4.metric("Selected Distribution", selected_distribution)
-    metric_5.metric("Average MTTF", f"{df_results['MTTF'].mean():,.2f}")
 
     with distribution_tab:
         st.subheader("Choose Distribution Method")
